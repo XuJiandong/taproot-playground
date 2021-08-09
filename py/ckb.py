@@ -16,7 +16,7 @@ tagged_hash = ckb_tagged_hash
 
 
 class Script:
-    def run(self):
+    def exec(self):
         print("run script successfully")
         return True
 
@@ -51,7 +51,7 @@ def smt_verify(smt_root: bytes, proof: bytes, key: bytes, value: bytes) -> bool:
     return True
 
 
-def load_script(script_identity: bytes) -> Script:
+def load_script(code_hash: bytes, hash_type: int) -> Script:
     return Script()
 
 
@@ -81,13 +81,12 @@ def taproot_unlock_via_script(internal_key: bytes, output_key: bytes, y_parity: 
     # Just an idea:
     # script_identity can be 64 bytes at most: move 32 bytes into key and 32 bytes into value.
     # the key part should be unique.
-    # Here we use identity (21 bytes) as key
-    if not smt_verify(smt_root, proof, script_identity[0:21], [1]):
+    if not smt_verify(smt_root, proof, script_identity[0:32], script_identity[33:64]):
         return False
-    # should verify with taproot_preimage and signature in witness, omitted
-    script = load_script(script_identity)
+    # Here we use 32 bytes code_hash and 1 byte hash_type
+    script = load_script(script_identity[0:32], script_identity[33])
     # bip-0341: Execute the script, according to the applicable script rules
-    return script.run()
+    return script.exec()
 
 
 if __name__ == "__main__":
@@ -100,14 +99,14 @@ if __name__ == "__main__":
         0xB7E151628AED2A6ABF7158809CF4F3C762E7160F38B4DA56A784D9045190CFEF)
     internal_key = pubkey_gen(internal_seckey)
 
-    # 1. as taproot
+    # 1. pay-to-scripthash
     (sig, output_key, y_parity) = taproot_sign(smt_root, internal_seckey, message)
 
     success = taproot_unlock_via_script(
         internal_key, output_key, y_parity, smt_root, proof, script_identity)
     assert success
 
-    # 2. as normal schnorr signature
+    # 2. pay-to-pubkey
     # If the spending conditions do not require a script path, 
     # the output key should commit to an unspendable script path 
     # instead of having no script path. This can be achieved by 
