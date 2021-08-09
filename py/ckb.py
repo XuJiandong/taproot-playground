@@ -51,7 +51,7 @@ def smt_verify(smt_root: bytes, proof: bytes, key: bytes, value: bytes) -> bool:
     return True
 
 
-def load_script_by_hash(script_hash: bytes) -> Script:
+def load_script(script_identity: bytes) -> Script:
     return Script()
 
 
@@ -69,7 +69,7 @@ def taproot_sign(smt_root: bytes, internal_seckey: bytes, message: bytes) -> Tup
 def taproot_unlock_via_sig(message: bytes, output_key: bytes, sig: bytes) -> bool:
     return schnorr_verify(message, output_key, sig)
 
-# provide internal_key, output_key, y_pairity, smt_root, proof, script_hash in witness
+# provide internal_key, output_key, y_pairity, smt_root, proof, script_identity in witness
 def taproot_unlock_via_script(internal_key: bytes, output_key: bytes, y_parity: int,
                             smt_root: bytes, proof: bytes, script_identity: bytes) -> bool:
     # bip-0341: Let t = hash.TapTweak(p || km).
@@ -78,12 +78,14 @@ def taproot_unlock_via_script(internal_key: bytes, output_key: bytes, y_parity: 
     if key != output_key or y_parity != out_y_pairty:
         return False
 
-    # an idea:
+    # Just an idea:
     # script_identity can be 64 bytes at most: move 32 bytes into key and 32 bytes into value.
     # the key part should unique.
-    if not smt_verify(smt_root, proof, script_identity[0:32], script_identity[32:64]):
+    # Here we use identity (21 bytes) as key
+    if not smt_verify(smt_root, proof, script_identity[0:21], [1]):
         return False
-    script = load_script_by_hash(script_identity)
+    # should verify with taproot_preimage and signature in witness
+    script = load_script(script_identity)
     # bip-0341: Execute the script, according to the applicable script rules
     return script.run()
 
