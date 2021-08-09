@@ -23,11 +23,17 @@ class Script:
 
 def taproot_tweak_pubkey(pubkey: bytes, h: bytes) -> Tuple[int, bytes]:
     t = int_from_bytes(tagged_hash("TapTweak", pubkey + h))
-    # how to guarantee that?
-    # if failed, try another h value
+    # if failed, must try another h value
+    # bip-0341: If t ≥ (order of secp256k1), fail.
     if t >= SECP256K1_ORDER:
         raise ValueError
-    Q = point_add(lift_x(pubkey), point_mul(G, t))
+    # bip-0341: Let p = c[1:33] and let P = lift_x(int(p)) where lift_x and [:] are defined as in BIP340.
+    # Fail if this point is not on the curve.
+    P = lift_x(pubkey)
+    if P is None:
+        raise ValueError        
+    # bip-0341: Let Q = P + int(t)G.
+    Q = point_add(P, point_mul(G, t))
     return 0 if has_even_y(Q) else 1, bytes_from_int(x(Q))
 
 
@@ -54,27 +60,31 @@ def taproot_sign(smt_root: bytes, internal_seckey: bytes, message: bytes) -> Tup
     output_seckey = taproot_tweak_seckey(internal_seckey, smt_root)
     sig = schnorr_sign(message, output_seckey, aux_rand)
 
-    internal_pubkey = pubkey_gen(internal_seckey)
-    (has_odd_y, output_pubkey) = taproot_tweak_pubkey(internal_pubkey, smt_root)
-    return (sig, output_pubkey)
+    internal_key = pubkey_gen(internal_seckey)
+    (y_parity, output_key) = taproot_tweak_pubkey(internal_key, smt_root)
+    return (sig, output_key, y_parity)
 
 
-# provide output pubkey, sig in witness
-def taproot_unlock_via_sig(message: bytes, pubkey: bytes, sig: bytes) -> bool:
-    return schnorr_verify(message, pubkey, sig)
+# provide output_key, sig in witness
+def taproot_unlock_via_sig(message: bytes, output_key: bytes, sig: bytes) -> bool:
+    return schnorr_verify(message, output_key, sig)
 
-# provide internal pubkey, sig, smt_root, proof, script_hash in witness
-def taproot_unlock_via_script(message: bytes, internal_pubkey: bytes, sig: bytes, 
+# provide internal_key, output_key, y_pairity, smt_root, proof, script_hash in witness
+def taproot_unlock_via_script(internal_key: bytes, output_key: bytes, y_parity: int,
                             smt_root: bytes, proof: bytes, script_identity: bytes) -> bool:
-    (hash_odd_y, output_pubkey) = taproot_tweak_pubkey(internal_pubkey, smt_root)
-
-    if not schnorr_verify(message, output_pubkey, sig):
+    # bip-0341: Let t = hash.TapTweak(p || km).
+    (out_y_pairty, key) = taproot_tweak_pubkey(internal_key, smt_root)
+    # bip-0341: If q ≠ x(Q) or c[0] & 1 ≠ y(Q) mod 2, fail
+    if key != output_key or y_parity != out_y_pairty:
         return False
+
+    # an idea:
     # script_identity can be 64 bytes at most: move 32 bytes into key and 32 bytes into value.
     # the key part should unique.
     if not smt_verify(smt_root, proof, script_identity[0:32], script_identity[32:64]):
         return False
     script = load_script_by_hash(script_identity)
+    # bip-0341: Execute the script, according to the applicable script rules
     return script.run()
 
 
@@ -83,15 +93,16 @@ if __name__ == "__main__":
     script_identity = bytes_from_int(0x11)*2
     smt_root = bytes_from_int(0x12)
     message = bytes_from_int(0x13)
+    y_parity = 0xFF
     internal_seckey = bytes_from_int(
         0xB7E151628AED2A6ABF7158809CF4F3C762E7160F38B4DA56A784D9045190CFEF)
-    internal_pubkey = pubkey_gen(internal_seckey)
+    internal_key = pubkey_gen(internal_seckey)
 
-    (sig, output_pubkey) = taproot_sign(smt_root, internal_seckey, message)
+    (sig, output_key, y_parity) = taproot_sign(smt_root, internal_seckey, message)
 
-    success = taproot_unlock_via_sig(message, output_pubkey, sig)
+    success = taproot_unlock_via_sig(message, output_key, sig)
     assert success
 
     success = taproot_unlock_via_script(
-        message, internal_pubkey, sig, smt_root, proof, script_identity)
+        internal_key, output_key, y_parity, smt_root, proof, script_identity)
     assert success
